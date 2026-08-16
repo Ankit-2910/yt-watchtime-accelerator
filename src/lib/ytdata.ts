@@ -4,6 +4,7 @@
 
 import type {
   ChannelSnapshot,
+  RealRetentionPoint,
   RetentionBucket,
   TimePoint,
   Video,
@@ -53,6 +54,63 @@ function modelRetention(avgPct: number, isShort: boolean): RetentionBucket[] {
     const r = Math.round(100 * Math.exp(-k * t * 3));
     return { label, retention: Math.max(4, r) };
   });
+}
+
+/**
+ * Parse the Analytics "audience retention" report into an ordered curve.
+ * Reads columnHeaders by name so it's robust to column ordering. Pure &
+ * testable (no network).
+ */
+export function parseRetentionResponse(data: any): {
+  points: RealRetentionPoint[];
+  relative: number | null;
+} {
+  const headers: string[] = (data?.columnHeaders ?? []).map((h: any) => h.name);
+  const iRatio = headers.indexOf("elapsedVideoTimeRatio");
+  const iWatch = headers.indexOf("audienceWatchRatio");
+  const iRel = headers.indexOf("relativeRetentionPerformance");
+  const rows: any[][] = data?.rows ?? [];
+  if (iRatio < 0 || iWatch < 0) return { points: [], relative: null };
+
+  const points: RealRetentionPoint[] = rows
+    .map((r) => ({
+      ratio: Math.round((r[iRatio] ?? 0) * 1000) / 10,
+      watchRatio: Math.round((r[iWatch] ?? 0) * 1000) / 10,
+      relative: iRel >= 0 && typeof r[iRel] === "number" ? r[iRel] : null,
+    }))
+    .sort((a, b) => a.ratio - b.ratio);
+
+  const relVals = iRel >= 0 ? rows.map((r) => r[iRel]).filter((v) => typeof v === "number") : [];
+  const relative = relVals.length
+    ? Math.round((relVals.reduce((s, v) => s + v, 0) / relVals.length) * 100) / 100
+    : null;
+
+  return { points, relative };
+}
+
+/**
+ * Fetch the real per-percent audience-retention curve for one owned video.
+ * Uses the YouTube Analytics `elapsedVideoTimeRatio` dimension (channel-owner
+ * auth via yt-analytics.readonly). Returns an empty curve if unavailable
+ * (too few views, not the owner, or analytics not authorized) so callers can
+ * fall back to the modeled curve.
+ */
+export async function fetchRetentionCurve(
+  token: string,
+  videoId: string
+): Promise<{ points: RealRetentionPoint[]; relative: number | null }> {
+  const today = new Date();
+  const url =
+    `${ANALYTICS}?ids=channel==MINE&startDate=2005-02-14&endDate=${ymd(today)}` +
+    `&dimensions=elapsedVideoTimeRatio` +
+    `&metrics=audienceWatchRatio,relativeRetentionPerformance` +
+    `&filters=video==${encodeURIComponent(videoId)}`;
+  try {
+    const data = await getJSON(url, token);
+    return parseRetentionResponse(data);
+  } catch {
+    return { points: [], relative: null };
+  }
 }
 
 export async function buildRealChannel(token: string): Promise<ChannelSnapshot> {

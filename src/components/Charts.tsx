@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { RetentionBucket, TimePoint } from "@/lib/types";
+import type { RealRetentionPoint, RetentionBucket, TimePoint } from "@/lib/types";
 
 const AXIS = { stroke: "#5f6b7c", fontSize: 11 };
 const GRID = "#1b212c";
@@ -96,6 +96,41 @@ export function RetentionCurveChart({ curve }: { curve: RetentionBucket[] }) {
         <YAxis tick={AXIS} tickLine={false} axisLine={false} width={36} domain={[0, 100]} />
         <Tooltip {...tooltipStyle()} />
         <Area type="monotone" dataKey="Retention" stroke="#22c55e" strokeWidth={2} fill="url(#ret)" />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Real per-percent audience-retention curve (dense, from YouTube Analytics). */
+export function RetentionCurveDense({ points }: { points: RealRetentionPoint[] }) {
+  const data = points.map((p) => ({ ratio: p.ratio, Retention: p.watchRatio }));
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <AreaChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+        <defs>
+          <linearGradient id="retLive" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#22c55e" stopOpacity={0.4} />
+            <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid stroke={GRID} vertical={false} />
+        <XAxis
+          dataKey="ratio"
+          type="number"
+          domain={[0, 100]}
+          ticks={[0, 25, 50, 75, 100]}
+          tickFormatter={(v) => `${v}%`}
+          tick={AXIS}
+          tickLine={false}
+          axisLine={false}
+        />
+        <YAxis tick={AXIS} tickLine={false} axisLine={false} width={40} tickFormatter={(v) => `${v}%`} />
+        <Tooltip
+          {...tooltipStyle()}
+          formatter={(v: number) => [`${v}%`, "Watching"]}
+          labelFormatter={(l) => `At ${l}% of video`}
+        />
+        <Area type="monotone" dataKey="Retention" stroke="#22c55e" strokeWidth={2} fill="url(#retLive)" dot={false} />
       </AreaChart>
     </ResponsiveContainer>
   );

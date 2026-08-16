@@ -52,8 +52,16 @@ Read-only — the app never writes to YouTube or automates anything.
 4. Put `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` and a long `AUTH_SECRET` in `.env.local`.
 5. Restart, open **Settings → Connect YouTube**.
 
+### Real per-second audience retention
+When connected, the **Retention** tab fetches the true audience-retention curve
+for the selected video from the Analytics API (`elapsedVideoTimeRatio` /
+`audienceWatchRatio`, channel-owner auth) and derives the improvement plan from
+it — including `relativeRetentionPerformance` vs similar-length videos. It's
+fetched on demand per video and falls back to the modeled curve (from real avg %
+viewed) when a video has too few views for a retention report.
+
 ### Still on the roadmap
-- True per-second retention curves (currently modeled from real average % viewed — needs elevated Analytics access) and impression-CTR / returning-viewer breakdowns (not exposed by the public Analytics API).
+- Impression-CTR / returning-viewer breakdowns (not exposed by the public Analytics API).
 - Persisting ideas/thumbnail scores to Postgres (schema ready).
 
 ---

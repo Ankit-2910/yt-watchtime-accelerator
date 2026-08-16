@@ -34,6 +34,16 @@ export interface RetentionBucket {
   retention: number;
 }
 
+/** A point on the real (per-percent) audience-retention curve from YouTube Analytics. */
+export interface RealRetentionPoint {
+  /** elapsed position through the video, 0-100 (%) */
+  ratio: number;
+  /** audience still watching at this point, 0-100+ (%); can exceed 100 on rewatched segments */
+  watchRatio: number;
+  /** relative retention performance vs similar-length videos, 0-1 (or null) */
+  relative: number | null;
+}
+
 export interface Video {
   id: string;
   ytVideoId: string;

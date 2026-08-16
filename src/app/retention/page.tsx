@@ -1,17 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
 import { PageHeader, Badge, Meter } from "@/components/ui";
-import { RetentionCurveChart } from "@/components/Charts";
-import type { Video } from "@/lib/types";
-import { Activity, AlertTriangle, Sparkles } from "lucide-react";
+import { RetentionCurveChart, RetentionCurveDense } from "@/components/Charts";
+import type { RealRetentionPoint, Video } from "@/lib/types";
+import { Activity, AlertTriangle, Sparkles, Wifi } from "lucide-react";
 
-/** Turn a retention curve into a concrete improvement plan. */
-function retentionPlan(v: Video): string[] {
+/** Improvement plan from the modeled bucket curve (demo / no analytics). */
+function modeledPlan(v: Video): string[] {
   const c = v.retentionCurve;
   const plan: string[] = [];
-  // biggest single drop
   let worstIdx = 0;
   let worstDrop = 0;
   for (let i = 1; i < c.length; i++) {
@@ -41,14 +40,95 @@ function retentionPlan(v: Video): string[] {
   return plan;
 }
 
+/** Improvement plan from the REAL per-percent audience-retention curve. */
+function livePlan(points: RealRetentionPoint[], relative: number | null): string[] {
+  const plan: string[] = [];
+  if (points.length < 3) return plan;
+
+  // biggest drop between consecutive points
+  let worst = { at: 0, drop: 0 };
+  for (let i = 1; i < points.length; i++) {
+    const drop = points[i - 1].watchRatio - points[i].watchRatio;
+    if (drop > worst.drop) worst = { at: points[i].ratio, drop: Math.round(drop) };
+  }
+  // intro retention: audience remaining by ~10% of the video
+  const early = points.find((p) => p.ratio >= 10) ?? points[1];
+  const introLoss = Math.round(points[0].watchRatio - early.watchRatio);
+  if (introLoss > 20) {
+    plan.push(`You lose ~${introLoss}% of viewers in the first 10% of the video. Cut the intro and open on the payoff.`);
+  }
+  if (worst.drop > 6) {
+    plan.push(`Sharpest drop is around ${worst.at}% of the video (−${worst.drop}%). Rewatch that moment and tighten the 10s before it.`);
+  }
+  // rewatch spikes (audienceWatchRatio rising = replays)
+  const spike = points.find((p, i) => i > 0 && p.watchRatio - points[i - 1].watchRatio > 4);
+  if (spike) {
+    plan.push(`Viewers rewatch around ${spike.ratio}% — that segment resonates. Consider leading with a version of it.`);
+  }
+  const ending = points.at(-1)!;
+  plan.push(
+    ending.watchRatio > 35
+      ? `Strong ending (${Math.round(ending.watchRatio)}% still watching) — add an end screen to your best 'watch next'.`
+      : `Only ${Math.round(ending.watchRatio)}% reach the end — tighten the final third and end on a hook, not an outro.`
+  );
+  if (relative != null) {
+    plan.push(
+      relative >= 0.5
+        ? `This video holds attention better than ~${Math.round(relative * 100)}% of similar-length videos — make more like it.`
+        : `It underperforms similar-length videos on retention (${Math.round(relative * 100)}th percentile). The pacing is the fix.`
+    );
+  }
+  return plan;
+}
+
+interface LiveState {
+  status: "idle" | "loading" | "live" | "modeled";
+  points: RealRetentionPoint[];
+  relative: number | null;
+}
+
 export default function Retention() {
-  const { channel, ready } = useStore();
+  const { channel, ready, connected } = useStore();
   const [id, setId] = useState<string | null>(null);
+  const [live, setLive] = useState<LiveState>({ status: "idle", points: [], relative: null });
+
+  const videos = channel?.videos.filter((v) => v.format === "long") ?? [];
+  const active = videos.find((v) => v.id === id) ?? videos[0];
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!active || !connected) {
+      setLive({ status: "modeled", points: [], relative: null });
+      return;
+    }
+    setLive((s) => ({ ...s, status: "loading" }));
+    (async () => {
+      try {
+        const res = await fetch(`/api/youtube/retention?videoId=${encodeURIComponent(active.ytVideoId)}`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (res.ok && Array.isArray(data.points) && data.points.length >= 3) {
+          setLive({ status: "live", points: data.points, relative: data.relative ?? null });
+        } else {
+          setLive({ status: "modeled", points: [], relative: null });
+        }
+      } catch {
+        if (!cancelled) setLive({ status: "modeled", points: [], relative: null });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active, connected]);
+
   if (!ready || !channel) return null;
 
-  const videos = channel.videos.filter((v) => v.format === "long");
-  const active = videos.find((v) => v.id === id) ?? videos[0];
-  const plan = active ? retentionPlan(active) : [];
+  const isLive = live.status === "live";
+  const plan = active
+    ? isLive
+      ? livePlan(live.points, live.relative)
+      : modeledPlan(active)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -91,20 +171,51 @@ export default function Retention() {
                 <h2 className="section-title flex items-center gap-2">
                   <Activity className="h-5 w-5 text-accent-green" /> Audience retention curve
                 </h2>
-                <Badge tone={active.stats.avgPercentageViewed >= 40 ? "green" : "amber"}>
-                  {active.stats.avgPercentageViewed}% avg viewed
-                </Badge>
+                <div className="flex items-center gap-2">
+                  {isLive ? (
+                    <Badge tone="green">
+                      <Wifi className="h-3.5 w-3.5" /> Live per-second retention
+                    </Badge>
+                  ) : (
+                    <Badge tone="default">
+                      {connected ? "Modeled (no data yet)" : "Modeled from avg % viewed"}
+                    </Badge>
+                  )}
+                  <Badge tone={active.stats.avgPercentageViewed >= 40 ? "green" : "amber"}>
+                    {active.stats.avgPercentageViewed}% avg viewed
+                  </Badge>
+                </div>
               </div>
-              <RetentionCurveChart curve={active.retentionCurve} />
-              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-                {active.retentionCurve.map((b) => (
-                  <div key={b.label} className="rounded-lg border border-line bg-bg-soft p-2 text-center">
-                    <div className="text-[10px] uppercase tracking-wider text-ink-dim">{b.label}</div>
-                    <div className="mt-0.5 text-sm font-semibold text-ink">{b.retention}%</div>
-                    <div className="mt-1"><Meter value={b.retention} tone={b.retention >= 50 ? "green" : b.retention >= 25 ? "amber" : "brand"} /></div>
+
+              {live.status === "loading" ? (
+                <div className="grid h-[220px] place-items-center">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-brand" />
+                </div>
+              ) : isLive ? (
+                <>
+                  <RetentionCurveDense points={live.points} />
+                  {live.relative != null && (
+                    <p className="mt-2 text-xs text-ink-dim">
+                      Relative retention performance: {Math.round(live.relative * 100)}th percentile vs similar-length videos.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <RetentionCurveChart curve={active.retentionCurve} />
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                    {active.retentionCurve.map((b) => (
+                      <div key={b.label} className="rounded-lg border border-line bg-bg-soft p-2 text-center">
+                        <div className="text-[10px] uppercase tracking-wider text-ink-dim">{b.label}</div>
+                        <div className="mt-0.5 text-sm font-semibold text-ink">{b.retention}%</div>
+                        <div className="mt-1">
+                          <Meter value={b.retention} tone={b.retention >= 50 ? "green" : b.retention >= 25 ? "amber" : "brand"} />
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              )}
             </div>
 
             <div className="card">
