@@ -1,0 +1,309 @@
+// YouTube Watch-Time Accelerator — data model
+// PostgreSQL. The app runs in demo mode without a DB; this schema powers
+// the persistent (real-data) mode. Run `npm run db:push` after setting DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Core ───────────────────────────────
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  name      String?
+  image     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  channels  Channel[]
+
+  @@map("users")
+}
+
+model Channel {
+  id            String   @id @default(cuid())
+  userId        String
+  ytChannelId   String   @unique
+  title         String
+  handle        String?
+  thumbnailUrl  String?
+  subscribers   Int      @default(0)
+  totalViews    BigInt   @default(0)
+  // Progress toward the 4,000 valid public watch-hour monetization gate
+  currentWatchHours Float @default(0)
+  targetWatchHours  Float @default(4000)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videos          Video[]
+  playlists       Playlist[]
+  watchTime       WatchTimePoint[]
+  subscriberStats SubscriberPoint[]
+  contentIdeas    ContentIdea[]
+  calendarItems   CalendarItem[]
+  experiments     Experiment[]
+  recommendations Recommendation[]
+  alerts          Alert[]
+  dailyReports    DailyReport[]
+
+  @@index([userId])
+  @@map("channels")
+}
+
+model Video {
+  id            String   @id @default(cuid())
+  channelId     String
+  ytVideoId     String   @unique
+  title         String
+  description   String?  @db.Text
+  thumbnailUrl  String?
+  durationSec   Int      @default(0)
+  publishedAt   DateTime?
+  // "long" | "short"
+  format        String   @default("long")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  channel        Channel          @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  analytics      VideoAnalytics[]
+  playlistVideos PlaylistVideo[]
+  thumbnails     Thumbnail[]
+  titles         TitleVariant[]
+
+  @@index([channelId])
+  @@map("videos")
+}
+
+model VideoAnalytics {
+  id                   String   @id @default(cuid())
+  videoId              String
+  date                 DateTime
+  views                Int      @default(0)
+  likes                Int      @default(0)
+  comments             Int      @default(0)
+  // seconds
+  avgViewDuration      Float    @default(0)
+  avgPercentageViewed  Float    @default(0)
+  // hours accumulated in the window
+  watchHours           Float    @default(0)
+  ctr                  Float    @default(0)
+  subscribersGained    Int      @default(0)
+  newViewers           Int      @default(0)
+  returningViewers     Int      @default(0)
+  trafficSource        String?
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([videoId, date])
+  @@index([videoId])
+  @@map("video_analytics")
+}
+
+model WatchTimePoint {
+  id         String   @id @default(cuid())
+  channelId  String
+  date       DateTime
+  // valid public watch hours added this day
+  watchHours Float    @default(0)
+  // excluded from the 4,000h gate but tracked for context
+  shortsFeedHours Float @default(0)
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, date])
+  @@index([channelId])
+  @@map("watch_time")
+}
+
+model SubscriberPoint {
+  id          String   @id @default(cuid())
+  channelId   String
+  date        DateTime
+  subscribers Int      @default(0)
+  gained      Int      @default(0)
+  lost        Int      @default(0)
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, date])
+  @@index([channelId])
+  @@map("subscribers")
+}
+
+model Playlist {
+  id           String   @id @default(cuid())
+  channelId    String
+  ytPlaylistId String?  @unique
+  title        String
+  description  String?
+  createdAt    DateTime @default(now())
+
+  channel Channel         @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  items   PlaylistVideo[]
+
+  @@index([channelId])
+  @@map("playlists")
+}
+
+model PlaylistVideo {
+  id         String @id @default(cuid())
+  playlistId String
+  videoId    String
+  position   Int    @default(0)
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  video    Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, videoId])
+  @@index([playlistId])
+  @@map("playlist_videos")
+}
+
+// ───────────────────────────── Growth engine ─────────────────────────
+
+model ContentIdea {
+  id             String   @id @default(cuid())
+  channelId      String
+  title          String
+  topic          String?
+  hook           String?
+  targetAudience String?
+  suggestedDurationSec Int?
+  thumbnailConcept String?
+  seoKeywords    String[]
+  playlist       String?
+  rationale      String?  @db.Text
+  // idea confidence score 0-100
+  score          Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId])
+  @@map("content_ideas")
+}
+
+model CalendarItem {
+  id          String   @id @default(cuid())
+  channelId   String
+  title       String
+  topic       String?
+  type        String   @default("long") // long | short | community
+  durationSec Int?
+  thumbnailUrl String?
+  scriptUrl   String?
+  publishDate DateTime?
+  playlist    String?
+  // IDEA | SCRIPT | RECORDING | EDITING | READY | PUBLISHED | ANALYZING
+  status      String   @default("IDEA")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId])
+  @@map("content_calendar")
+}
+
+model Experiment {
+  id         String   @id @default(cuid())
+  channelId  String
+  // title | thumbnail | hook | length | topic | publish_time | playlist_position
+  dimension  String
+  hypothesis String?
+  metric     String
+  startAt    DateTime?
+  endAt      DateTime?
+  variantA   String?
+  variantB   String?
+  winner     String?
+  confidence Float?
+  status     String   @default("planned") // planned | running | complete
+  createdAt  DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId])
+  @@map("experiments")
+}
+
+model Thumbnail {
+  id        String   @id @default(cuid())
+  videoId   String?
+  imageUrl  String
+  score     Int      @default(0)
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+
+  video Video? @relation(fields: [videoId], references: [id], onDelete: SetNull)
+
+  @@index([videoId])
+  @@map("thumbnails")
+}
+
+model TitleVariant {
+  id        String   @id @default(cuid())
+  videoId   String?
+  text      String
+  category  String? // curiosity | seo | emotional | documentary | shorts
+  ctrScore  Int      @default(0)
+  seoScore  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  video Video? @relation(fields: [videoId], references: [id], onDelete: SetNull)
+
+  @@index([videoId])
+  @@map("titles")
+}
+
+model Recommendation {
+  id        String   @id @default(cuid())
+  channelId String
+  title     String
+  detail    String?  @db.Text
+  impact    Int      @default(0) // 0-100 expected legitimate watch-time impact
+  effort    Int      @default(0) // 0-100
+  confidence Int     @default(0) // 0-100
+  done      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId])
+  @@map("recommendations")
+}
+
+model Alert {
+  id        String   @id @default(cuid())
+  channelId String
+  kind      String   // retention_drop | watch_hours_drop | fast_grower | reminder
+  message   String
+  severity  String   @default("info") // info | warn | critical
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId])
+  @@map("alerts")
+}
+
+model DailyReport {
+  id        String   @id @default(cuid())
+  channelId String
+  date      DateTime
+  payload   Json
+  createdAt DateTime @default(now())
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, date])
+  @@index([channelId])
+  @@map("daily_reports")
+}

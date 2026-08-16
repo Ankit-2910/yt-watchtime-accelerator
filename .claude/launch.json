@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ytwta-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "E:\\HACKATHON\\yt-watchtime-accelerator"],
+      "port": 3000
+    }
+  ]
+}
