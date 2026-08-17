@@ -1,5 +1,7 @@
 # 🚀 YouTube Watch-Time Accelerator
 
+[![CI](https://github.com/Ankit-2910/yt-watchtime-accelerator/actions/workflows/ci.yml/badge.svg)](https://github.com/Ankit-2910/yt-watchtime-accelerator/actions/workflows/ci.yml)
+
 A **legitimate** creator-growth command center. Its single mission: help a creator
 reach **4,000 valid public watch hours** as fast as possible through **real**
 audience discovery, retention, session depth and returning viewers.
